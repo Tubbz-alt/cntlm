@@ -125,7 +125,6 @@ int parent_add(char *parent, int port) {
 	int len, i;
 	char *proxy;
 	proxy_t *aux;
-	struct in_addr host;
 
 	/*
 	 * Check format and parse it.
@@ -157,7 +156,7 @@ int parent_add(char *parent, int port) {
 
 	/*
 	 * Try to resolve proxy address
-	 */
+	 *
 	if (debug)
 		syslog(LOG_INFO, "Resolving proxy %s...\n", proxy);
 	if (!so_resolv(&host, proxy)) {
@@ -165,10 +164,12 @@ int parent_add(char *parent, int port) {
 		free(proxy);
 		return 0;
 	}
+	*/
 
 	aux = (proxy_t *)new(sizeof(proxy_t));
-	aux->host = host;
+	strlcpy(aux->hostname, proxy, sizeof(aux->hostname));
 	aux->port = port;
+	aux->resolved = 0;
 	parent_list = plist_add(parent_list, ++parent_count, (char *)aux);
 
 	free(proxy);
@@ -1194,7 +1195,7 @@ int main(int argc, char **argv) {
 	/*
 	 * Last chance to get password from the user
 	 */
-	if (interactivehash || (interactivepwd && !ntlmbasic)) {
+	if (interactivehash || magic_detect || (interactivepwd && !ntlmbasic)) {
 		printf("Password: ");
 		tcgetattr(0, &termold);
 		termnew = termold;
