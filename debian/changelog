@@ -1,3 +1,9 @@
+cntlm (0.30-1) unstable; urgency=low
+
+  * New upstream release
+
+ -- David Kubicek <dave@awk.cz>  Fri, 08 Jun 2007 20:50:31 +0200
+
 cntlm (0.29.1-1) unstable; urgency=low
 
   * New upstream release

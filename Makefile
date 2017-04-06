@@ -14,6 +14,8 @@ OBJS=utils.o ntlm.o xcrypt.o config.o socket.o proxy.o
 CFLAGS=$(FLAGS) -Wall -pedantic -O3 -D_POSIX_C_SOURCE=199506L -D_ISOC99_SOURCE -D_REENTRANT -DVERSION=\"`cat VERSION`\"
 LDFLAGS=-lpthread
 NAME=cntlm
+VER=`cat VERSION`
+DIR=`pwd`
 
 $(NAME): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LDFLAGS)
@@ -30,11 +32,42 @@ install: $(NAME)
 			|| install -D -o root -g root -m 600 doc/$(NAME).conf $(SYSCONFDIR)/$(NAME).conf; \
 	fi
 
+rpm:
+	if [ `id -u` = 0 ]; then \
+		redhat/rules binary; \
+	else \
+		fakeroot redhat/rules binary; \
+	fi
+
+deb:
+	if [ `id -u` = 0 ]; then \
+		debian/rules binary; \
+	else \
+		fakeroot debian/rules binary; \
+	fi
+
+tgz:
+	mkdir -p tmp
+	rm -f tmp/$(NAME)-$(VER)
+	ln -s $(DIR) tmp/$(NAME)-$(VER)
+	sed "s/^\./$(NAME)-$(VER)/" doc/files.txt | tar zchf $(NAME)-$(VER).tar.gz --no-recursion -C tmp -T -
+	rm tmp/$(NAME)-$(VER)
+	rmdir tmp 2>/dev/null || true
+
 uninstall:
 	rm -f $(BINDIR)/$(NAME) $(MANDIR)/man1/$(NAME).1 2>/dev/null || true
 
 clean:
 	rm -f *.o tags cntlm pid massif* callgrind* 2>/dev/null
+
+distclean: clean
+	if [ `id -u` = 0 ]; then \
+		debian/rules clean; \
+		redhat/rules clean; \
+	else \
+		fakeroot debian/rules clean; \
+		fakeroot redhat/rules clean; \
+	fi
 
 proxy.o: proxy.c
 	if [ -z "$(SYSCONFDIR)" ]; then \
