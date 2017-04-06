@@ -29,9 +29,18 @@
 #include <errno.h>
 #include <ctype.h>
 
+#include "config/config.h"
 #include "swap.h"
 #include "utils.h"
 #include "socket.h"
+
+char hextab[17] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', 0};
+int hexindex[128] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+	-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+	-1,-1,-1,-1,-1,-1,-1,-1,-1,0,1,2,3,4,5,6,7,8,9,-1,-1,-1,-1,-1,-1,
+	-1,10,11,12,13,14,15,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+	-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,10,11,12,13,14,15,-1,-1,-1,-1,-1,
+	-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
 
 /*
  * Add a new item to a list. Every plist_t variable must be 
@@ -209,7 +218,7 @@ plist_t plist_free(plist_t list) {
  * Caller decides this on a by-call basis. Part of the manipulation
  * routines is a "free". That method always deallocates both the
  * key and the value. So for static or temporary keys/values,
- * the caller instructs us to duplicate the neccessary amount 
+ * the caller instructs us to duplicate the necessary amount 
  * of heap. This mechanism is used to minimize memory-related
  * bugs throughout the code and tens of free's in the main
  * module.
@@ -221,8 +230,8 @@ hlist_t hlist_add(hlist_t list, char *key, char *value, int allockey, int allocv
 		return list;
 
 	tmp = malloc(sizeof(struct hlist_s));
-	tmp->key = (allockey ? strdupl(key) : key);
-	tmp->value = (allocvalue ? strdupl(value) : value);
+	tmp->key = (allockey ? strdup(key) : key);
+	tmp->value = (allocvalue ? strdup(value) : value);
 	tmp->next = NULL;
 
 	if (list == NULL)
@@ -298,7 +307,7 @@ hlist_t hlist_mod(hlist_t list, char *key, char *value, int add) {
 
 	if (t) {
 		free(t->value);
-		t->value = strdupl(value);
+		t->value = strdup(value);
 	} else if (add) {
 		list = hlist_add(list, key, value, 1, 1);
 	}
@@ -349,6 +358,28 @@ char *hlist_get(hlist_t list, const char *key) {
 	}
 
 	return (t == NULL ? NULL : t->value);
+}
+
+/*
+ * Test if substr is part of the header's value.
+ * Both case-insensitive.
+ */
+int hlist_subcmp(hlist_t list, const char *key, const char *substr) {
+	int found = 0;
+	char *tmp, *low;
+
+	tmp = hlist_get(list, key);
+	if (tmp) {
+		lowercase(tmp = strdup(tmp));
+		lowercase(low = strdup(substr));
+		if (strstr(tmp, substr))
+			found = 1;
+
+		free(low);
+		free(tmp);
+	}
+
+	return found;
 }
 
 /*
@@ -438,7 +469,7 @@ char *head_value(const char *src) {
 		while (*sub == ' ')
 			sub++;
 
-		return strdupl(sub);
+		return strdup(sub);
 	} else
 		return NULL;
 }
@@ -452,6 +483,7 @@ rr_data_t new_rr_data(void) {
 	data = malloc(sizeof(struct rr_data_s));
 	data->req = 0;
 	data->code = 0;
+	data->skip_http = 0;
 	data->headers = NULL;
 	data->method = NULL;
 	data->url = NULL;
@@ -473,16 +505,17 @@ rr_data_t dup_rr_data(rr_data_t data) {
 	tmp = new_rr_data();
 	tmp->req = data->req;
 	tmp->code = data->code;
+	tmp->skip_http = data->skip_http;
 	if (data->headers)
 		tmp->headers = hlist_dup(data->headers);
 	if (data->method)
-		tmp->method = strdupl(data->method);
+		tmp->method = strdup(data->method);
 	if (data->url)
-		tmp->url = strdupl(data->url);
+		tmp->url = strdup(data->url);
 	if (data->http)
-		tmp->http = strdupl(data->http);
+		tmp->http = strdup(data->http);
 	if (data->msg)
-		tmp->msg = strdupl(data->msg);
+		tmp->msg = strdup(data->msg);
 	
 	return tmp;
 }
@@ -517,10 +550,11 @@ char *trimr(char *buf) {
 	return buf;
 }
 
+#if config_strdup == 0
 /*
  * Our implementation of non-POSIX strdup()
  */
-char *strdupl(const char *src) {
+char *strdup(const char *src) {
 	size_t len;
 	char *tmp;
 
@@ -530,6 +564,7 @@ char *strdupl(const char *src) {
 	
 	return tmp;
 }
+#endif
 
 /*
  * More intuitive version of strncpy with string termination
@@ -643,6 +678,61 @@ inline int unicode(char **dst, char *src) {
 	*dst = ret;
 	return 2*l;
 }
+
+char *urlencode(const char *str) {
+	char *tmp;
+	int i, pos;
+
+	tmp = new(strlen(str)*3 + 1);
+	for (pos = 0, i = 0; i < strlen(str); ++i) {
+		if (isdigit(str[i]) || (tolower(str[i]) >= 'a' && tolower(str[i]) <= 'z') || str[i] == '.' || str[i] == '-' || str[i] == '_' || str[i] == '~') {
+			tmp[pos++] = str[i];
+		} else {
+			sprintf(tmp+pos, "%%%X", (unsigned char)str[i]);
+			pos += 3;
+		}
+	}
+
+	return tmp;
+}
+
+char *printmem(char *src, size_t len, int bitwidth) {
+	char *tmp;
+	int i;
+
+	tmp = new(2*len+1);
+	for (i = 0; i < len; ++i) {
+		tmp[i*2] = hextab[((uint8_t)src[i] ^ (uint8_t)(7-bitwidth)) >> 4];
+		tmp[i*2+1] = hextab[(src[i] ^ (uint8_t)(7-bitwidth)) & 0x0F];
+	}
+
+	return tmp;
+}
+
+char *scanmem(char *src, int bitwidth) {
+	int h, l, i, bytes;
+	char *tmp;
+
+	if (strlen(src) % 2)
+		return NULL;
+
+	bytes = strlen(src)/2;
+	tmp = new(bytes+1);
+	for (i = 0; i < bytes; ++i) {
+		h = hexindex[(int)src[i*2]];
+		l = hexindex[(int)src[i*2+1]];
+		if (h < 0 || l < 0) {
+			free(tmp);
+			return NULL;
+		}
+		tmp[i] = ((h << 4) + l) ^ (uint8_t)(7-bitwidth);
+	}
+	tmp[i] = 0;
+
+	return tmp;
+}
+
+
 
 /* 
  * BASE64 CODE FROM MUTT BEGIN - ORIGINAL COPYRIGHT APPLIES:

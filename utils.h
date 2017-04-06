@@ -23,6 +23,7 @@
 #define _UTILS_H
 
 #include <pthread.h>
+#include "config/config.h"
 
 #define BUFSIZE			1024
 #define VAL(var, type, offset)	*((type *)(var+offset))
@@ -43,7 +44,7 @@ struct hlist_s {
 
 typedef struct plist_s *plist_t;
 struct plist_s {
-	unsigned long int key;
+	unsigned long key;
 	char *aux;
 	struct plist_s *next;
 };
@@ -57,6 +58,7 @@ struct rr_data_s {
 	int req;
 	hlist_t headers;
 	int code;
+	int skip_http;
 	char *method;
 	char *url;
 	char *http;
@@ -87,11 +89,11 @@ extern hlist_t hlist_mod(hlist_t list, char *key, char *value, int add);
 extern int hlist_in(hlist_t list, const char *key);
 extern int hlist_count(hlist_t list);
 extern char *hlist_get(hlist_t list, const char *key);
+extern int hlist_subcmp(hlist_t list, const char *key, const char *substr);
 extern hlist_t hlist_free(hlist_t list);
 extern void hlist_dump(hlist_t list);
 
 extern char *substr(const char *src, int pos, int len);
-extern char *strdupl(const char *src);
 extern size_t strlcpy(char *dst, const char *src, size_t siz);
 extern size_t strlcat(char *dst, const char *src, size_t siz);
 extern char *trimr(char *buf);
@@ -102,12 +104,22 @@ extern char *head_name(const char *src);
 extern char *head_value(const char *src);
 extern inline int unicode(char **dst, char *src);
 extern inline char *new(size_t size);
+extern char *urlencode(const char *str);
 
 extern rr_data_t new_rr_data(void);
 extern rr_data_t dup_rr_data(rr_data_t data);
 extern void free_rr_data(rr_data_t data);
 
+extern char *printmem(char *src, size_t len, int bitwidth);
+extern char *scanmem(char *src, int bitwidth);
+
 extern void to_base64(unsigned char *out, const unsigned char *in, size_t len, size_t olen);
 extern int from_base64(char *out, const char *in);
+
+extern long int random(void);
+#if config_gethostname == 1
+extern int gethostname(char *name, size_t len);
+#endif
+extern char *strdup(const char *src);
 
 #endif /* _UTILS_H */

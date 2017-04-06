@@ -33,6 +33,8 @@
 
 #include "utils.h"
 
+extern int debug;
+
 /*
  * gethostbyname() wrapper. Return 1 if OK, otherwise 0.
  */
@@ -146,7 +148,7 @@ int so_closed(int fd) {
 		return 1;
 
 	i = so_recvtest(fd);
-	return (i == 0 || (i == -1 && errno != EAGAIN));
+	return (i == 0 || (i == -1 && errno != EAGAIN && errno != ENOENT));   /* ENOENT, you ask? Perhap AIX devels could explain! :-( */
 }
 
 /*
@@ -180,6 +182,8 @@ int so_recvln(int fd, char **buf, int *size) {
 		 * end of buffer, still no EOL?
 		 */
 		if (len == *size-1 && c != '\n') {
+			if (debug)
+				printf("so_recvln(%d): realloc %d\n", fd, *size*2);
 			*size *= 2;
 			tmp = realloc(*buf, *size);
 			if (tmp == NULL)

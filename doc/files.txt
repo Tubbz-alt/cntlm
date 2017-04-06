@@ -8,8 +8,13 @@
 ./acl.h
 ./config.c
 ./config.h
+./config/endian.c
+./config/gethostname.c
+./config/strdup.c
+./configure
 ./ntlm.c
 ./ntlm.h
+./pages.c
 ./proxy.c
 ./socket.c
 ./socket.h
@@ -21,8 +26,6 @@
 ./doc/cntlm.1
 ./doc/cntlm.conf
 ./doc/files.txt
-./doc/memory_consumption_with_regex.pdf
-./doc/memory_consumption_without_regex.pdf
 ./doc/valgrind.txt
 ./redhat/cntlm.init
 ./redhat/cntlm.spec
