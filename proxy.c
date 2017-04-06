@@ -49,6 +49,7 @@
 #include "ntlm.h"
 #include "swap.h"
 #include "config.h"
+#include "acl.h"
 
 #define DEFAULT_PORT	"3128"
 
@@ -102,19 +103,6 @@ typedef struct {
 	struct in_addr host;
 	int port;
 } proxy_t;
-
-/*
- * ACL rule datatypes.
- */
-enum acl_t {
-	ACL_ALLOW = 0,
-	ACL_DENY
-};
-
-typedef struct {
-	unsigned int ip;
-	int mask;
-} network_t;
 
 /*
  * List of custom header substitutions.
@@ -244,84 +232,6 @@ int parent_proxy(char *proxy, int port) {
 }
 
 /*
- * Add the rule spec to the ACL list.
- */
-int acl_add(plist_t *rules, char *spec, enum acl_t acl) {
-	struct in_addr source;
-	network_t *aux;
-	int i, mask = 32;
-	char *tmp;
-	
-	if (rules == NULL)
-		return 0;
-
-	spec = strdupl(spec);
-	aux = (network_t *)new(sizeof(network_t));
-	i = strcspn(spec, "/");
-	if (i < strlen(spec)) {
-		spec[i] = 0;
-		mask = strtol(spec+i+1, &tmp, 10);
-		if (mask < 0 || mask > 32 || spec[i+1] == 0 || *tmp != 0) {
-			syslog(LOG_ERR, "ACL netmask for %s is invalid\n", spec);
-			free(aux);
-			free(spec);
-			return 0;
-		}
-	}
-
-	if (!strcmp("*", spec)) {
-		source.s_addr = 0;
-		mask = 0;
-	} else {
-		if (!so_resolv(&source, spec)) {
-			syslog(LOG_ERR, "ACL source address %s is invalid\n", spec);
-			free(aux);
-			free(spec);
-			return 0;
-		}
-	}
-
-	aux->ip = source.s_addr;
-	aux->mask = mask;
-	mask = swap32(~(((uint64_t)1 << (32-mask)) - 1));
-	if ((source.s_addr & mask) != source.s_addr)
-		syslog(LOG_WARNING, "Subnet specification might be incorrect: %s/%d\n", inet_ntoa(source), aux->mask);
-
-	syslog(LOG_INFO, "New ACL rule: %s %s/%d\n", (acl == ACL_ALLOW ? "allow" : "deny"), inet_ntoa(source), aux->mask);
-	*rules = plist_add(*rules, acl, (char *)aux);
-
-	free(spec);
-	return 1;
-}
-
-/*
- * Takes client IP address (network order) and walks the
- * ACL rules until a match is found, returning ACL_ALLOW
- * or ACL_DENY accordingly. If no rule matches, connection
- * is allowed (such is the case with no ACLs).
- *
- * Proper policy should always end with a default rule,
- * targetting either "*" or "0/0" to explicitly express
- * one's intentions.
- */
-enum acl_t acl_check(plist_t rules, struct in_addr naddr) {
-	network_t *aux;
-	int mask;
-
-	while (rules) {
-		aux = (network_t *)rules->aux;
-		mask = swap32(~(((uint64_t)1 << (32-aux->mask)) - 1));
-
-		if ((naddr.s_addr & mask) == (aux->ip & mask))
-			return rules->key;
-
-		rules = rules->next;
-	}
-
-	return ACL_ALLOW;
-}
-
-/*
  * Receive HTTP request/response from the given socket. Fill in pre-allocated
  * "data" structure.
  * Returns: 1 if OK, 0 in case of socket EOF or other error
@@ -340,6 +250,9 @@ int headers_recv(int fd, rr_data_t data) {
 	i = so_recvln(fd, &buf, &bsize);
 	if (i <= 0)
 		goto bailout;
+
+	if (debug)
+		printf("HEAD: %s\n", buf);
 
 	/*
 	 * Are we reading HTTP request (from client) or response (from server)?
@@ -575,6 +488,63 @@ int data_send(int dst, int src, int size) {
 }
 
 /*
+ * Forward "size" of data from "src" to "dst". If size == -1 then keep
+ * forwarding until src reaches EOF.
+ */
+int chunked_data_send(int dst, int src) {
+	char *buf;
+	int bsize;
+	int i, csize;
+
+	char *err = NULL;
+
+	bsize = BUFSIZE;
+	buf = new(bsize);
+
+	do {
+		i = so_recvln(src, &buf, &bsize);
+		if (i <= 0) {
+			err = NULL;
+			break;
+		}
+
+		/* printf("Line: %s\n", buf); */
+		csize = strtol(buf, &err, 16);
+		/* printf("strtol: %d (%x) - err: %s\n", csize, csize, err); */
+		if (*err != '\r') {
+			err = NULL;
+			break;
+		}
+
+		if (debug) {
+			if (csize) {
+				printf("chunk: %d\n", csize);
+			} else {
+				printf("last chunk: %d\n", csize);
+			}
+		}
+
+		write(dst, buf, strlen(buf));
+		if (csize)
+			data_send(dst, src, csize);
+
+		i = read(src, buf, 2);
+		write(dst, buf, i);
+
+	} while (csize != 0);
+
+	free(buf);
+
+	if (err == NULL) {
+		if (debug)
+			syslog(LOG_WARNING, "chunked_data_send: fds %d:%d warning %d (connection closed)\n", dst, src, i);
+		return 0;
+	}
+
+	return 1;
+}
+
+/*
  * Full-duplex forwarding between proxy and client descriptors.
  * Used for the HTTP CONNECT method.
  */
@@ -736,7 +706,7 @@ int authenticate(int sd, rr_data_t data) {
  */
 void *process(void *client) {
 	int *rsocket[2], *wsocket[2];
-	int i, loop, nobody, keep;
+	int i, loop, nobody, keep, chunked;
 	rr_data_t data[2];
 	hlist_t tl;
 	char *tmp;
@@ -795,6 +765,8 @@ void *process(void *client) {
 				free_rr_data(data[1]);
 				goto bailout;
 			}
+
+			chunked = 0;
 
 			if (debug)
 				hlist_dump(data[loop]->headers);
@@ -887,7 +859,7 @@ void *process(void *client) {
 				/*
 				 * Was the request first and did we authenticated with proxy?
 				 * Remember not to authenticate this connection any more, should
-				 * it be keep-alive reused for more client requests.
+				 * it be reused for future client requests.
 				 */
 				if (!authok && data[1]->code != 407)
 					authok = 1;
@@ -915,7 +887,8 @@ void *process(void *client) {
 
 				tmp = hlist_get(data[loop]->headers, "Content-Length");
 				if (!nobody && tmp == NULL && (hlist_in(data[loop]->headers, "Content-Type")
-						|| hlist_in(data[loop]->headers, "Transfer-Encoding"))) {
+						|| hlist_in(data[loop]->headers, "Transfer-Encoding")
+						|| data[1]->code == 200)) {
 					i = -1;
 					if (debug) {
 						printf("*************************\n");
@@ -929,22 +902,46 @@ void *process(void *client) {
 					i = (tmp == NULL || nobody ? 0 : atol(tmp));
 
 				if (i) {
-					if (debug)
-						printf("Body included. Lenght: %d\n", i);
-
 					/*
 					 * Not all data transfered to the client. Close proxy connection as it
 					 * might contain unspecified amount of unread data.
 					 */
-					if (!data_send(*wsocket[loop], *rsocket[loop], i)) {
+					tmp = hlist_get(data[loop]->headers, "Transfer-Encoding");
+					if (tmp) {
+						tmp = strdupl(tmp);
+						lowercase(tmp);
+						if (strstr(tmp, "chunked"))
+							chunked = 1;
+					}
+
+					if (chunked) {
 						if (debug)
-							printf("Could not send whole body\n");
-						close(sd);
-						free_rr_data(data[0]);
-						free_rr_data(data[1]);
-						goto bailout;
-					} else if (debug) {
-						printf("Body sent.\n");
+							printf("Chunked body included.\n");
+
+						if (!chunked_data_send(*wsocket[loop], *rsocket[loop])) {
+							if (debug)
+								printf("Could not chunk send whole body\n");
+							close(sd);
+							free_rr_data(data[0]);
+							free_rr_data(data[1]);
+							goto bailout;
+						} else if (debug) {
+							printf("Chunked body sent.\n");
+						}
+					} else {
+						if (debug)
+							printf("Body included. Lenght: %d\n", i);
+
+						if (!data_send(*wsocket[loop], *rsocket[loop], i)) {
+							if (debug)
+								printf("Could not send whole body\n");
+							close(sd);
+							free_rr_data(data[0]);
+							free_rr_data(data[1]);
+							goto bailout;
+						} else if (debug) {
+							printf("Body sent.\n");
+						}
 					}
 				} else if (debug)
 					printf("No body.\n");

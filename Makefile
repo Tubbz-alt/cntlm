@@ -2,15 +2,15 @@
 # You can tweak these three variables to make things install where you
 # like, but do not touch more unless you know what you are doing. ;)
 #
-SYSCONFDIR=/usr/local/etc
-BINDIR=/usr/local/bin
-MANDIR=/usr/local/man
+SYSCONFDIR=$(DESTDIR)/etc
+BINDIR=$(DESTDIR)/usr/sbin
+MANDIR=$(DESTDIR)/usr/share/man
 
 #
 # Careful now...
 #
 CC=gcc
-OBJS=utils.o ntlm.o xcrypt.o config.o socket.o proxy.o
+OBJS=utils.o ntlm.o xcrypt.o config.o socket.o acl.o proxy.o
 CFLAGS=$(FLAGS) -Wall -pedantic -O3 -D_POSIX_C_SOURCE=199506L -D_ISOC99_SOURCE -D_REENTRANT -DVERSION=\"`cat VERSION`\"
 LDFLAGS=-lpthread
 NAME=cntlm

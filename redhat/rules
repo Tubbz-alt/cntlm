@@ -39,7 +39,7 @@ _EOF_
 	TMP=`pwd`
 	rm -f $DIR/tmp/$NAME 2>/dev/null
 	ln -s $TMP $DIR/tmp/$NAME			# Generate source .tar.gz
-	sed "s/^\./$NAME/" doc/files.txt | tar zchf $DIR/SOURCES/$NAME.tar.gz --no-recursion -C $DIR/tmp -T -
+	sed "s/^\./$NAME/" doc/files.txt | tar zvchf $DIR/SOURCES/$NAME.tar.gz --no-recursion -C $DIR/tmp -T -
 	cp redhat/cntlm.* $DIR/SOURCES/			# Prepare build environment
 
 	rpmbuild -ba $DIR/SOURCES/cntlm.spec		# Build RPM and copy to current dir
